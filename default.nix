@@ -1,5 +1,14 @@
-{ mics-build ? (import ../mics-build).mics-build }:
-mics-build.buildSbtLibrary {
+
+
+# this file originates from SBTix
+{ pkgs ? import <nixpkgs> {} }:
+
+with pkgs;
+
+let
+  sbtix = callPackage ./sbtix.nix {};
+in
+  sbtix.buildSbtLibrary {
     name = "amqp-client";
     src = ./.;
     repo = [
@@ -7,4 +16,6 @@ mics-build.buildSbtLibrary {
       (import ./project/repo.nix)
       (import ./manual-repo.nix)
     ];
-}
+
+  }
+
