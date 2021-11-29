@@ -21,7 +21,9 @@ object ChannelOwner {
 
   case class NotConnectedError(request: Request)
 
-  def props(init: Seq[Request] = Seq.empty[Request], channelParams: Option[ChannelParameters] = None): Props = Props(new ChannelOwner(init, channelParams))
+  def props(init: Seq[Request] = Seq.empty[Request], channelParams: Option[ChannelParameters] = None): Props = Props(
+    new ChannelOwner(init, channelParams)
+  )
 
   private[amqp] class Forwarder(channel: Channel) extends Actor with ActorLogging {
 
@@ -32,108 +34,145 @@ object ChannelOwner {
     override def unhandled(message: Any): Unit = log.warning(s"unhandled message $message")
 
     def receive = {
-      case request@AddShutdownListener(listener) => {
-        sender ! withChannel(channel, request)(c => c.addShutdownListener(new ShutdownListener {
-          def shutdownCompleted(cause: ShutdownSignalException): Unit = {
-            listener ! Shutdown(cause)
-          }
-        }))
+      case request @ AddShutdownListener(listener) => {
+        sender ! withChannel(channel, request)(c =>
+          c.addShutdownListener(new ShutdownListener {
+            def shutdownCompleted(cause: ShutdownSignalException): Unit = {
+              listener ! Shutdown(cause)
+            }
+          })
+        )
       }
-      case request@AddReturnListener(listener) => {
-        sender ! withChannel(channel, request)(c => c.addReturnListener(new ReturnListener {
-          def handleReturn(replyCode: Int, replyText: String, exchange: String, routingKey: String, properties: BasicProperties, body: Array[Byte]) {
-            listener ! ReturnedMessage(replyCode, replyText, exchange, routingKey, properties, body)
-          }
-        }))
+      case request @ AddReturnListener(listener) => {
+        sender ! withChannel(channel, request)(c =>
+          c.addReturnListener(new ReturnListener {
+            def handleReturn(
+              replyCode: Int,
+              replyText: String,
+              exchange: String,
+              routingKey: String,
+              properties: BasicProperties,
+              body: Array[Byte]
+            ) {
+              listener ! ReturnedMessage(replyCode, replyText, exchange, routingKey, properties, body)
+            }
+          })
+        )
       }
-      case request@AddFlowListener(listener) => {
-        sender ! withChannel(channel, request)(c => c.addFlowListener(new FlowListener {
-          def handleFlow(active: Boolean): Unit = listener ! HandleFlow(active)
-        }))
+      case request @ AddFlowListener(listener) => {
+        sender ! withChannel(channel, request)(c =>
+          c.addFlowListener(new FlowListener {
+            def handleFlow(active: Boolean): Unit = listener ! HandleFlow(active)
+          })
+        )
       }
-      case request@Publish(exchange, routingKey, body, properties, mandatory, immediate) => {
+      case request @ Publish(exchange, routingKey, body, properties, mandatory, immediate) => {
         log.debug("publishing %s".format(request))
         val props = properties getOrElse new AMQP.BasicProperties.Builder().build()
-        sender ! withChannel(channel, request)(c => c.basicPublish(exchange, routingKey, mandatory, immediate, props, body))
+        sender ! withChannel(channel, request)(c =>
+          c.basicPublish(exchange, routingKey, mandatory, immediate, props, body)
+        )
       }
-      case request@Transaction(publish) => {
-        sender ! withChannel(channel, request) {
-          c => {
+      case request @ Transaction(publish) => {
+        sender ! withChannel(channel, request) { c =>
+          {
             c.txSelect()
-            publish.foreach(p => c.basicPublish(p.exchange, p.key, p.mandatory, p.immediate, p.properties getOrElse new AMQP.BasicProperties.Builder().build(), p.body))
+            publish.foreach(p =>
+              c.basicPublish(
+                p.exchange,
+                p.key,
+                p.mandatory,
+                p.immediate,
+                p.properties getOrElse new AMQP.BasicProperties.Builder().build(),
+                p.body
+              )
+            )
             c.txCommit()
           }
         }
       }
-      case request@DeclareExchange(exchange) => {
+      case request @ DeclareExchange(exchange) => {
         log.debug("declaring exchange {}", exchange)
         sender ! withChannel(channel, request)(c => declareExchange(c, exchange))
       }
-      case request@DeleteExchange(exchange, ifUnused) => {
+      case request @ DeleteExchange(exchange, ifUnused) => {
         log.debug("deleting exchange {} ifUnused {}", exchange, ifUnused)
         sender ! withChannel(channel, request)(c => c.exchangeDelete(exchange, ifUnused))
       }
-      case request@DeclareQueue(queue) => {
+      case request @ DeclareQueue(queue) => {
         log.debug("declaring queue {}", queue)
         sender ! withChannel(channel, request)(c => declareQueue(c, queue))
       }
-      case request@PurgeQueue(queue) => {
+      case request @ PurgeQueue(queue) => {
         log.debug("purging queue {}", queue)
         sender ! withChannel(channel, request)(c => c.queuePurge(queue))
       }
-      case request@DeleteQueue(queue, ifUnused, ifEmpty) => {
+      case request @ DeleteQueue(queue, ifUnused, ifEmpty) => {
         log.debug("deleting queue {} ifUnused {} ifEmpty {}", queue, ifUnused, ifEmpty)
         sender ! withChannel(channel, request)(c => c.queueDelete(queue, ifUnused, ifEmpty))
       }
-      case request@QueueBind(queue, exchange, routingKey, args) => {
+      case request @ QueueBind(queue, exchange, routingKey, args) => {
         log.debug("binding queue {} to key {} on exchange {}", queue, routingKey, exchange)
         sender ! withChannel(channel, request)(c => c.queueBind(queue, exchange, routingKey, args.asJava))
       }
-      case request@QueueUnbind(queue, exchange, routingKey, args) => {
+      case request @ QueueUnbind(queue, exchange, routingKey, args) => {
         log.debug("unbinding queue {} to key {} on exchange {}", queue, routingKey, exchange)
         sender ! withChannel(channel, request)(c => c.queueUnbind(queue, exchange, routingKey, args.asJava))
       }
-      case request@Get(queue, autoAck) => {
+      case request @ Get(queue, autoAck) => {
         log.debug("getting from queue {} autoAck {}", queue, autoAck)
         sender ! withChannel(channel, request)(c => c.basicGet(queue, autoAck))
       }
-      case request@Ack(deliveryTag) => {
+      case request @ Ack(deliveryTag) => {
         log.debug("acking %d on %s".format(deliveryTag, channel))
         sender ! withChannel(channel, request)(c => c.basicAck(deliveryTag, false))
       }
-      case request@Reject(deliveryTag, requeue) => {
+      case request @ Reject(deliveryTag, requeue) => {
         log.debug("rejecting %d on %s".format(deliveryTag, channel))
         sender ! withChannel(channel, request)(c => c.basicReject(deliveryTag, requeue))
       }
-      case request@CreateConsumer(listener) => {
+      case request @ CreateConsumer(listener) => {
         log.debug(s"creating new consumer for listener $listener")
-        sender ! withChannel(channel, request)(c => new DefaultConsumer(channel) {
-          override def handleDelivery(consumerTag: String, envelope: Envelope, properties: BasicProperties, body: Array[Byte]) {
-            listener ! Delivery(consumerTag, envelope, properties, body)
+        sender ! withChannel(channel, request)(c =>
+          new DefaultConsumer(channel) {
+            override def handleDelivery(
+              consumerTag: String,
+              envelope: Envelope,
+              properties: BasicProperties,
+              body: Array[Byte]
+            ) {
+              listener ! Delivery(consumerTag, envelope, properties, body)
+            }
           }
-        })
+        )
       }
-      case request@ConfirmSelect => {
-        sender ! withChannel(channel, request)(c => c.confirmSelect())
+      case ConfirmSelect => {
+        sender ! withChannel(channel, ConfirmSelect)(c => c.confirmSelect())
       }
-      case request@AddConfirmListener(listener) => {
-        sender ! withChannel(channel, request)(c => c.addConfirmListener(new ConfirmListener {
-          def handleAck(deliveryTag: Long, multiple: Boolean): Unit = listener ! HandleAck(deliveryTag, multiple)
+      case request @ AddConfirmListener(listener) => {
+        sender ! withChannel(channel, request)(c =>
+          c.addConfirmListener(new ConfirmListener {
+            def handleAck(deliveryTag: Long, multiple: Boolean): Unit = listener ! HandleAck(deliveryTag, multiple)
 
-          def handleNack(deliveryTag: Long, multiple: Boolean): Unit = listener ! HandleNack(deliveryTag, multiple)
-        }))
+            def handleNack(deliveryTag: Long, multiple: Boolean): Unit = listener ! HandleNack(deliveryTag, multiple)
+          })
+        )
       }
-      case request@WaitForConfirms(timeout) => {
-        sender ! withChannel(channel, request)(c => timeout match {
-          case Some(value) => c.waitForConfirms(value)
-          case None => c.waitForConfirms()
-        })
+      case request @ WaitForConfirms(timeout) => {
+        sender ! withChannel(channel, request)(c =>
+          timeout match {
+            case Some(value) => c.waitForConfirms(value)
+            case None        => c.waitForConfirms()
+          }
+        )
       }
-      case request@WaitForConfirmsOrDie(timeout) => {
-        sender ! withChannel(channel, request)(c => timeout match {
-          case Some(value) => c.waitForConfirmsOrDie(value)
-          case None => c.waitForConfirmsOrDie()
-        })
+      case request @ WaitForConfirmsOrDie(timeout) => {
+        sender ! withChannel(channel, request)(c =>
+          timeout match {
+            case Some(value) => c.waitForConfirmsOrDie(value)
+            case None        => c.waitForConfirmsOrDie()
+          }
+        )
       }
     }
   }
@@ -153,7 +192,9 @@ object ChannelOwner {
   }
 }
 
-class ChannelOwner(init: Seq[Request] = Seq.empty[Request], channelParams: Option[ChannelParameters] = None) extends Actor with ActorLogging {
+class ChannelOwner(init: Seq[Request] = Seq.empty[Request], channelParams: Option[ChannelParameters] = None)
+    extends Actor
+    with ActorLogging {
 
   import ChannelOwner._
 
