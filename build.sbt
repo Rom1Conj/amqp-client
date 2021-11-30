@@ -13,6 +13,12 @@ scalacOptions ++=
 
 resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
 
+publishTo :=
+  Some(
+    "Sonatype Nexus Repository Manager" at
+      "https://sf-nexus.mediarithmics.com/repository/thirdparty/"
+  )
+
 libraryDependencies := {
   val akkaVersion = "2.5.32"
   Seq(
